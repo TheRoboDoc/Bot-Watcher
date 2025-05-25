@@ -1,97 +1,63 @@
 import asyncio
-import yaml
 import logging
-import discord
 
-from datetime import datetime
-from typing import List, Tuple, Dict, Any
-from discord import Client
-from os.path import expanduser
+from discord import Client, Intents
 
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+from watcher.config import Config
+from watcher.logger import setup_logger
+from watcher.monitor import BotMonitor
+from watcher.notifier import Notifier
 
-WATCHER_TOKEN: str = config["watcher_token"]
 
-OWNER_ID: int = int(config["owner_id"])
-
-INTERVAL: int = config["interval"]
-
-BOT_IDS: list[int] = [int(b) for b in config["bots"]]
-
-LOG_PATH: str = expanduser(config["log_path"])
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_PATH),
-        logging.StreamHandler()
-    ]
-)
-
-intents: discord.Intents = discord.Intents.none()
-
-intents.presences = True
-intents.guilds = True
-intents.members = True
-
-client: Client = discord.Client(intents=intents)
-
-async def check_bots() -> None:
-    await client.wait_until_ready()
-
-    guilds: List[Guild] = client.guilds
-
-    owner: User = await client.fetch_user(OWNER_ID)
-
-    unreachable: List[Tuple[str, int, str]] = []
-
-    logging.info("\n\nCHECKING STATUS:")
-
-    for bot_id in BOT_IDS:
-        found: bool = False
-
-        for guild in guilds:
-            member: Member | None = guild.get_member(bot_id)
-
-            if member:
-                found = True
-
-                status: Status = member.status
-
-                logging.info(f"{member.name} ({bot_id}) is {status}")
-
-                if status != discord.Status.online:
-                    unreachable.append((member.name, bot_id, str(status)))
-                break
-
-        if not found:
-            logging.warning(f"Bot ID {bot_id} not found in any guilds.")
-
-            unreachable.append((f"ID {bot_id}", bot_id, "not in guild"))
-        
-    if unreachable:
-        msg: str = "**Alert**: Some bots are unreachable or offline:\n" + \
-                   "\n".join(f"- {name} ({bot_id}): {status}" for name, bot_id, status in unreachable)
-        
+async def main_loop(client: Client, monitor: BotMonitor, notifier: Notifier, interval: int) -> None:
+    while True:
         try:
-            await owner.send(msg)
+            offline_bots = await monitor.check_bots()
+
+            if offline_bots:
+                await notifier.send_alert(offline_bots)
         except Exception as e:
-            logging.error(f"Failed to DM owner: {e}")
+            logging.exception(f"Error in monitoring loop: {e}")
+        
+        await asyncio.sleep(interval)
+
+
+def main() -> None:
+    config = Config()
+
+    WATCHER_TOKEN: str = config.get("watcher_token")
+
+    OWNER_ID: int = int(config.get("owner_id"))
+
+    INTERVAL: int = config.get("interval")
+
+    BOT_IDS: list[int] = [int(b) for b in config.get("bots")]
+
+    LOG_PATH: str = config.get("log_path")
+
+    setup_logger(LOG_PATH)
+
+    intents = Intents.none()
+
+    intents.presences = True
+    intents.guilds = True
+    intents.members = True
+
+    client = Client(intents=intents)
+
+    monitor = BotMonitor(client, BOT_IDS)
+
+    notifier = Notifier(client, OWNER_ID)
+
+    @client.event
+    async def on_ready() -> None:
+        logging.info(f"Watcher bot logged in as {client.user}")
+
+        asyncio.create_task(main_loop(client, monitor, notifier, INTERVAL))
     
 
-    await asyncio.sleep(INTERVAL)
-
-    await check_bots()
-
-
-@client.event
-async def on_ready() -> None:
-    logging.info(f"Watcher bot logged in as {client.user}")
-
-    asyncio.create_task(check_bots())
+    client.run(WATCHER_TOKEN)
 
 
 if __name__ == "__main__":
-    client.run(WATCHER_TOKEN)
+    main()
