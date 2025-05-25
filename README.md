@@ -3,15 +3,15 @@
 A headless Python daemon to monitor the online status of your Discord bots and alert you via DM if any go offline.
 
 ## Features
-- Periodically checks presence status of configured bot IDs
-- Logs results to both file and terminal
+- Periodically checks the presence status of configured bot IDs
+- Logs results to both the file and the terminal
 - Sends you a Discord DM if any bot is offline or unreachable
 - Fully configurable via `config.yaml`
 - Designed to run persistently via `systemd` or `tmux`
 
 ## Requirements
 - Python 3.10+
-- A monotorin bot (must be in the same server as bots being watched)
+- A monitoring bot (must be in the same server as the bots being watched)
 - `discord.py`, `PyYAML`
 
 ## Installation
